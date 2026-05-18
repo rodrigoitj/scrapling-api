@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from app.schemas import (
     ExtractCommand,
     FetchCommand,
+    FollowCommand,
     GetCommand,
     PostCommand,
     RunRequest,
@@ -107,3 +108,121 @@ def test_run_request_cache_defaults_true():
     )
     assert req.cache is True
     assert req.persist is True
+
+
+# --------------------------------------------------------------------------- #
+# PostCommand
+# --------------------------------------------------------------------------- #
+
+def test_post_command_valid():
+    cmd = PostCommand(type="post", url="https://example.com", data="key=value")
+    assert cmd.url == "https://example.com"
+    assert cmd.data == "key=value"
+
+
+def test_post_command_rejects_non_http_scheme():
+    with pytest.raises(ValidationError, match="http or https"):
+        PostCommand(type="post", url="ftp://example.com/file")
+
+
+def test_post_command_proxy_socks5_valid():
+    cmd = PostCommand(
+        type="post",
+        url="https://example.com",
+        proxy="socks5://proxy.example.com:1080",
+    )
+    assert cmd.proxy is not None
+    assert cmd.proxy.startswith("socks5://")
+
+
+def test_post_command_json_body_valid():
+    cmd = PostCommand(type="post", url="https://example.com", json_body={"key": "val"})
+    assert cmd.json_body == {"key": "val"}
+
+
+# --------------------------------------------------------------------------- #
+# FetchCommand
+# --------------------------------------------------------------------------- #
+
+def test_fetch_command_valid_defaults():
+    cmd = FetchCommand(type="fetch", url="https://example.com")
+    assert cmd.url == "https://example.com"
+    assert cmd.headless is True
+    assert cmd.block_ads is False
+
+
+def test_fetch_command_timeout_in_range():
+    cmd = FetchCommand(type="fetch", url="https://example.com", timeout=5000)
+    assert cmd.timeout == 5000
+
+
+def test_fetch_command_timeout_too_low():
+    with pytest.raises(ValidationError):
+        FetchCommand(type="fetch", url="https://example.com", timeout=500)
+
+
+def test_fetch_command_timeout_too_high():
+    with pytest.raises(ValidationError):
+        FetchCommand(type="fetch", url="https://example.com", timeout=200000)
+
+
+def test_fetch_command_wait_in_range():
+    cmd = FetchCommand(type="fetch", url="https://example.com", wait=2000)
+    assert cmd.wait == 2000
+
+
+def test_fetch_command_wait_too_high():
+    with pytest.raises(ValidationError):
+        FetchCommand(type="fetch", url="https://example.com", wait=60000)
+
+
+# --------------------------------------------------------------------------- #
+# StealthyFetchCommand
+# --------------------------------------------------------------------------- #
+
+def test_stealthy_fetch_command_valid_defaults():
+    cmd = StealthyFetchCommand(type="stealthy_fetch", url="https://example.com")
+    assert cmd.url == "https://example.com"
+    assert cmd.solve_cloudflare is False
+    assert cmd.block_webrtc is False
+    assert cmd.allow_webgl is True
+    assert cmd.hide_canvas is False
+
+
+def test_stealthy_fetch_command_with_stealth_options():
+    cmd = StealthyFetchCommand(
+        type="stealthy_fetch",
+        url="https://example.com",
+        solve_cloudflare=True,
+        block_webrtc=True,
+        hide_canvas=True,
+    )
+    assert cmd.solve_cloudflare is True
+    assert cmd.block_webrtc is True
+    assert cmd.hide_canvas is True
+
+
+# --------------------------------------------------------------------------- #
+# FollowCommand
+# --------------------------------------------------------------------------- #
+
+def test_follow_command_valid_defaults():
+    cmd = FollowCommand(type="follow", css_selector="a.next")
+    assert cmd.css_selector == "a.next"
+    assert cmd.attribute == "href"
+    assert cmd.headless is True
+    assert cmd.use_stealthy is False
+
+
+def test_follow_command_custom_attribute():
+    cmd = FollowCommand(type="follow", css_selector="img", attribute="src")
+    assert cmd.attribute == "src"
+
+
+# --------------------------------------------------------------------------- #
+# GetCommand – additional edge cases
+# --------------------------------------------------------------------------- #
+
+def test_get_command_timeout_too_high():
+    with pytest.raises(ValidationError):
+        GetCommand(type="get", url="https://example.com", timeout=150)
