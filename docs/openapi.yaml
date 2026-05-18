@@ -1,0 +1,591 @@
+openapi: "3.1.0"
+
+info:
+  title: Scrapling API
+  description: |
+    REST API that accepts a sequential list of scraping commands, executes them
+    in order using the Scrapling library, and returns the combined results.
+
+    **Command types**
+
+    | Type              | Description                                                              |
+    |-------------------|--------------------------------------------------------------------------|
+    | `get`             | Plain HTTP GET via `Fetcher` (no browser)                                |
+    | `post`            | Plain HTTP POST via `Fetcher` (no browser)                               |
+    | `fetch`           | Browser automation via `DynamicFetcher` (headless Playwright)            |
+    | `stealthy_fetch`  | Stealth browser fetch via `StealthyFetcher` (anti-bot bypass, optional Cloudflare solve) |
+    | `extract`         | Apply a CSS or XPath selector to the current page                        |
+    | `follow`          | Resolve a link attribute from the current page, then fetch the target    |
+
+    **Execution rules**
+    - Commands run strictly in array order.
+    - Execution halts on the first failed command.
+    - `extract` and `follow` require a prior fetch command in the sequence.
+
+    **Security guardrails**
+    - Only `http` and `https` URL schemes are accepted.
+    - The server applies `ALLOWED_HOSTS` and `BLOCKED_HOSTS` policies.
+    - Only authorized scraping; do not bypass paywalls or authentication without permission.
+  version: "1.0.0"
+  contact:
+    name: Scrapling API
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+
+tags:
+  - name: health
+    description: Health and dependency status
+  - name: runs
+    description: Command workflow execution and retrieval
+
+# ============================================================= Paths
+paths:
+
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: API and dependency health check
+      responses:
+        "200":
+          description: Health status of the API and all dependencies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+                dependencies:
+                  redis:
+                    status: ok
+                  mongodb:
+                    status: ok
+
+  /api/v1/runs:
+    post:
+      tags: [runs]
+      operationId: createRun
+      summary: Execute a sequential command workflow
+      description: |
+        Accepts an ordered list of scraping commands, executes them one by one,
+        and returns each command's result.
+
+        If `cache` is `true` (default) and an identical workflow was already run
+        within the TTL window, the cached result is returned immediately
+        (`cache_hit: true`).
+
+        If `persist` is `true` (default) and MongoDB is enabled, the run record
+        is stored and can be retrieved via `GET /api/v1/runs/{run_id}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunRequest"
+            examples:
+              simple_get:
+                summary: GET page and extract headings
+                value:
+                  commands:
+                    - type: get
+                      url: "https://example.com"
+                    - type: extract
+                      css_selector: "h1"
+              browser_fetch:
+                summary: Browser fetch of a dynamic page
+                value:
+                  commands:
+                    - type: fetch
+                      url: "https://example.com"
+                      network_idle: true
+                      disable_resources: true
+                    - type: extract
+                      css_selector: ".article-title"
+                      limit: 5
+              stealthy_cloudflare:
+                summary: Bypass Cloudflare protection
+                value:
+                  commands:
+                    - type: stealthy_fetch
+                      url: "https://protected-site.example.com"
+                      solve_cloudflare: true
+                    - type: extract
+                      css_selector: ".content p"
+              follow_link:
+                summary: Follow a link from the current page
+                value:
+                  commands:
+                    - type: get
+                      url: "https://news.example.com"
+                    - type: follow
+                      css_selector: "a.read-more"
+                      attribute: href
+                    - type: extract
+                      css_selector: "article p"
+      responses:
+        "200":
+          description: Workflow completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunResponse"
+        "400":
+          description: Request body is not valid JSON
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error (invalid command schema or policy violation)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+
+  /api/v1/runs/{run_id}:
+    get:
+      tags: [runs]
+      operationId: getRun
+      summary: Retrieve a persisted run record
+      description: |
+        Returns the full run record stored in MongoDB.
+        Returns `503` if `PERSIST_ENABLED` is `false`.
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          description: The MongoDB ObjectId hex string returned in a previous run response
+          schema:
+            type: string
+            example: "6647f9abcde123456789abcd"
+      responses:
+        "200":
+          description: Run record found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersistedRunResponse"
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Persistence is disabled on this server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/docs:
+    get:
+      tags: [runs]
+      operationId: getDocs
+      summary: Serve this OpenAPI specification
+      responses:
+        "200":
+          description: OpenAPI YAML document
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+# ============================================================ Components
+components:
+  schemas:
+
+    # ---------------------------------------------------------------- Request
+
+    RunRequest:
+      type: object
+      required: [commands]
+      properties:
+        commands:
+          type: array
+          minItems: 1
+          description: Ordered list of commands to execute sequentially
+          items:
+            $ref: "#/components/schemas/AnyCommand"
+        cache:
+          type: boolean
+          default: true
+          description: Return cached result if available; cache successful results
+        persist:
+          type: boolean
+          default: true
+          description: Persist the run record to MongoDB
+
+    AnyCommand:
+      oneOf:
+        - $ref: "#/components/schemas/GetCommand"
+        - $ref: "#/components/schemas/PostCommand"
+        - $ref: "#/components/schemas/FetchCommand"
+        - $ref: "#/components/schemas/StealthyFetchCommand"
+        - $ref: "#/components/schemas/ExtractCommand"
+        - $ref: "#/components/schemas/FollowCommand"
+      discriminator:
+        propertyName: type
+        mapping:
+          get: "#/components/schemas/GetCommand"
+          post: "#/components/schemas/PostCommand"
+          fetch: "#/components/schemas/FetchCommand"
+          stealthy_fetch: "#/components/schemas/StealthyFetchCommand"
+          extract: "#/components/schemas/ExtractCommand"
+          follow: "#/components/schemas/FollowCommand"
+
+    GetCommand:
+      type: object
+      required: [type, url]
+      properties:
+        type:
+          type: string
+          enum: [get]
+        url:
+          type: string
+          description: Target URL (http/https only)
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        cookies:
+          type: string
+          description: Cookie string, e.g. "session=abc; user=john"
+        params:
+          type: object
+          additionalProperties:
+            type: string
+        timeout:
+          type: integer
+          minimum: 1
+          maximum: 120
+          description: Request timeout in seconds (default from server config)
+        proxy:
+          type: string
+          description: "Proxy URL, e.g. http://user:pass@host:port"
+        follow_redirects:
+          type: boolean
+          default: true
+        verify_ssl:
+          type: boolean
+          default: true
+        impersonate:
+          type: string
+          description: Browser fingerprint to impersonate, e.g. "chrome" or "firefox"
+        stealthy_headers:
+          type: boolean
+          default: true
+        css_selector:
+          type: string
+          description: If provided, returns text of all matched elements instead of raw HTML
+
+    PostCommand:
+      type: object
+      required: [type, url]
+      properties:
+        type:
+          type: string
+          enum: [post]
+        url:
+          type: string
+        data:
+          type: string
+          description: URL-encoded form data string
+        json_body:
+          type: object
+          description: JSON body to send (mutually exclusive with data)
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        cookies:
+          type: string
+        params:
+          type: object
+          additionalProperties:
+            type: string
+        timeout:
+          type: integer
+          minimum: 1
+          maximum: 120
+        proxy:
+          type: string
+        follow_redirects:
+          type: boolean
+          default: true
+        verify_ssl:
+          type: boolean
+          default: true
+        impersonate:
+          type: string
+        stealthy_headers:
+          type: boolean
+          default: true
+        css_selector:
+          type: string
+
+    FetchCommand:
+      type: object
+      required: [type, url]
+      properties:
+        type:
+          type: string
+          enum: [fetch]
+        url:
+          type: string
+        headless:
+          type: boolean
+          default: true
+        disable_resources:
+          type: boolean
+          default: false
+          description: Drop images/fonts/etc for a speed boost
+        network_idle:
+          type: boolean
+          default: false
+          description: Wait until the network is idle before extracting
+        timeout:
+          type: integer
+          minimum: 1000
+          maximum: 120000
+          description: Browser timeout in milliseconds
+        wait:
+          type: integer
+          minimum: 0
+          maximum: 30000
+          description: Additional wait in ms after page load
+        css_selector:
+          type: string
+        wait_selector:
+          type: string
+          description: Wait until this CSS selector is present
+        proxy:
+          type: string
+        extra_headers:
+          type: object
+          additionalProperties:
+            type: string
+        dns_over_https:
+          type: boolean
+          default: false
+        block_ads:
+          type: boolean
+          default: false
+        locale:
+          type: string
+          description: Locale string, e.g. "en-US"
+
+    StealthyFetchCommand:
+      type: object
+      required: [type, url]
+      properties:
+        type:
+          type: string
+          enum: [stealthy_fetch]
+        url:
+          type: string
+        headless:
+          type: boolean
+          default: true
+        disable_resources:
+          type: boolean
+          default: false
+        network_idle:
+          type: boolean
+          default: false
+        timeout:
+          type: integer
+          minimum: 1000
+          maximum: 120000
+        wait:
+          type: integer
+          minimum: 0
+          maximum: 30000
+        css_selector:
+          type: string
+        wait_selector:
+          type: string
+        proxy:
+          type: string
+        extra_headers:
+          type: object
+          additionalProperties:
+            type: string
+        dns_over_https:
+          type: boolean
+          default: false
+        block_ads:
+          type: boolean
+          default: false
+        block_webrtc:
+          type: boolean
+          default: false
+        solve_cloudflare:
+          type: boolean
+          default: false
+          description: Attempt to automatically solve Cloudflare challenges
+        allow_webgl:
+          type: boolean
+          default: true
+        hide_canvas:
+          type: boolean
+          default: false
+
+    ExtractCommand:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [extract]
+        css_selector:
+          type: string
+          description: CSS selector (at least one of css_selector / xpath required)
+        xpath:
+          type: string
+          description: XPath expression (at least one of css_selector / xpath required)
+        attribute:
+          type: string
+          description: HTML attribute to extract instead of text, e.g. "href"
+        first_only:
+          type: boolean
+          default: false
+          description: Return only the first match
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: Maximum number of matches to return
+
+    FollowCommand:
+      type: object
+      required: [type, css_selector]
+      properties:
+        type:
+          type: string
+          enum: [follow]
+        css_selector:
+          type: string
+          description: CSS selector targeting the link element
+        attribute:
+          type: string
+          default: href
+          description: Attribute to read the URL from
+        headless:
+          type: boolean
+          default: true
+        disable_resources:
+          type: boolean
+          default: false
+        network_idle:
+          type: boolean
+          default: false
+        timeout:
+          type: integer
+          minimum: 1000
+          maximum: 120000
+        use_stealthy:
+          type: boolean
+          default: false
+          description: Use StealthyFetcher instead of DynamicFetcher for the followed URL
+
+    # ---------------------------------------------------------------- Response
+
+    CommandResult:
+      type: object
+      properties:
+        index:
+          type: integer
+          description: Zero-based position in the command array
+        type:
+          type: string
+          description: Command type
+        status:
+          type: string
+          enum: [ok, error]
+        duration_ms:
+          type: number
+          description: Execution time in milliseconds
+        output:
+          description: Command output (string, list of strings, or null)
+        error:
+          type: string
+          description: Error message if status is "error"
+
+    RunResponse:
+      type: object
+      properties:
+        run_id:
+          type: string
+          description: Unique run identifier (MongoDB ObjectId hex or UUID if persistence disabled)
+        status:
+          type: string
+          enum: [ok, error]
+        cache_hit:
+          type: boolean
+        commands_executed:
+          type: integer
+          description: Number of commands actually executed (may be less than total on error)
+        duration_ms:
+          type: number
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommandResult"
+        final_output:
+          description: Output of the last successful command
+
+    PersistedRunResponse:
+      allOf:
+        - $ref: "#/components/schemas/RunResponse"
+        - type: object
+          properties:
+            commands:
+              type: array
+              description: Original command payloads
+            created_at:
+              type: string
+              format: date-time
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        dependencies:
+          type: object
+          properties:
+            redis:
+              $ref: "#/components/schemas/DependencyStatus"
+            mongodb:
+              $ref: "#/components/schemas/DependencyStatus"
+
+    DependencyStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable, error]
+        detail:
+          type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        detail:
+          type: array
+          items:
+            type: object

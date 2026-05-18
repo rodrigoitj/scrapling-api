@@ -1,0 +1,17 @@
+Flask>=3.0,<4.0
+gunicorn>=21.2,<23.0
+python-dotenv>=1.0,<2.0
+pydantic>=2.7,<3.0
+
+# Scrapling - adaptive web scraping framework
+scrapling[all]>=0.4.8
+
+# Redis
+redis>=5.0,<6.0
+
+# MongoDB
+pymongo>=4.7,<5.0
+
+# Testing
+pytest>=8.0
+pytest-mock>=3.14
