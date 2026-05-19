@@ -469,8 +469,178 @@ def test_runner_blocked_subdomain_rejected(app):
 
 
 # --------------------------------------------------------------------------- #
-# _truncate helper
+# interact command
 # --------------------------------------------------------------------------- #
+
+def _make_pw_mocks(html: str = "<html><body>Logged in</body></html>", url: str = "https://example.com/dashboard"):
+    """Return (mock_sync_playwright_callable, mock_playwright_page) pair."""
+    mock_pl_page = MagicMock()
+    mock_pl_page.content.return_value = html
+    mock_pl_page.url = url
+
+    mock_browser = MagicMock()
+    mock_browser.new_page.return_value = mock_pl_page
+
+    mock_pw_instance = MagicMock()
+    mock_pw_instance.chromium.launch.return_value = mock_browser
+
+    mock_sync_pw = MagicMock()
+    mock_sync_pw.return_value.__enter__.return_value = mock_pw_instance
+    mock_sync_pw.return_value.__exit__.return_value = False
+
+    return mock_sync_pw, mock_pl_page
+
+
+def test_runner_interact_returns_html(app):
+    from app.schemas import InteractCommand, PageAction
+
+    mock_sync_pw, mock_pl_page = _make_pw_mocks()
+    mock_selector = MagicMock()
+    mock_selector.css.return_value.getall.return_value = []
+
+    with app.app_context():
+        with (
+            patch("playwright.sync_api.sync_playwright", mock_sync_pw),
+            patch("scrapling.parser.Selector", return_value=mock_selector),
+        ):
+            from app.services.runner import execute_commands
+
+            results = execute_commands(
+                [
+                    InteractCommand(
+                        type="interact",
+                        url="https://example.com/login",
+                        actions=[
+                            PageAction(action="fill", selector="#user", value="alice"),
+                            PageAction(action="fill", selector="#pass", value="secret"),
+                            PageAction(action="click", selector="button[type=submit]"),
+                        ],
+                    )
+                ]
+            )
+
+    assert len(results) == 1
+    assert results[0].status == "ok"
+    assert results[0].type == "interact"
+
+
+def test_runner_interact_calls_playwright_actions(app):
+    from app.schemas import InteractCommand, PageAction
+
+    mock_sync_pw, mock_pl_page = _make_pw_mocks()
+    mock_selector = MagicMock()
+
+    with app.app_context():
+        with (
+            patch("playwright.sync_api.sync_playwright", mock_sync_pw),
+            patch("scrapling.parser.Selector", return_value=mock_selector),
+        ):
+            from app.services.runner import execute_commands
+
+            execute_commands(
+                [
+                    InteractCommand(
+                        type="interact",
+                        url="https://example.com/login",
+                        actions=[
+                            PageAction(action="fill", selector="#user", value="alice"),
+                            PageAction(action="click", selector="button"),
+                            PageAction(action="wait_for_load_state", state="networkidle"),
+                        ],
+                    )
+                ]
+            )
+
+    mock_pl_page.fill.assert_called_once_with("#user", "alice", timeout=30000)
+    mock_pl_page.click.assert_called_once_with("button", timeout=30000)
+    mock_pl_page.wait_for_load_state.assert_any_call("networkidle", timeout=30000)
+
+
+def test_runner_interact_with_css_selector(app):
+    from app.schemas import InteractCommand, PageAction
+
+    mock_sync_pw, mock_pl_page = _make_pw_mocks()
+    mock_selector = MagicMock()
+    css_result = MagicMock()
+    css_result.getall.return_value = ["42"]
+    mock_selector.css.return_value = css_result
+
+    with app.app_context():
+        with (
+            patch("playwright.sync_api.sync_playwright", mock_sync_pw),
+            patch("scrapling.parser.Selector", return_value=mock_selector),
+        ):
+            from app.services.runner import execute_commands
+
+            results = execute_commands(
+                [
+                    InteractCommand(
+                        type="interact",
+                        url="https://example.com/login",
+                        actions=[PageAction(action="click", selector="button")],
+                        css_selector=".num",
+                    )
+                ]
+            )
+
+    assert results[0].status == "ok"
+    assert results[0].output == ["42"]
+    mock_selector.css.assert_called_with(".num::text")
+
+
+def test_runner_interact_stores_page_for_extract(app):
+    from app.schemas import InteractCommand, PageAction
+
+    mock_sync_pw, mock_pl_page = _make_pw_mocks()
+    mock_selector = MagicMock()
+    css_result = MagicMock()
+    css_result.getall.return_value = ["Dashboard"]
+    mock_selector.css.return_value = css_result
+
+    with app.app_context():
+        with (
+            patch("playwright.sync_api.sync_playwright", mock_sync_pw),
+            patch("scrapling.parser.Selector", return_value=mock_selector),
+        ):
+            from app.services.runner import execute_commands
+
+            results = execute_commands(
+                [
+                    InteractCommand(
+                        type="interact",
+                        url="https://example.com/login",
+                        actions=[PageAction(action="click", selector="button")],
+                    ),
+                    ExtractCommand(type="extract", css_selector="h1"),
+                ]
+            )
+
+    assert len(results) == 2
+    assert results[1].status == "ok"
+    assert results[1].output == ["Dashboard"]
+
+
+def test_runner_interact_blocked_host(app):
+    from app.schemas import InteractCommand, PageAction
+
+    app.config["BLOCKED_HOSTS"] = ["blocked.com"]
+    with app.app_context():
+        from app.services.runner import execute_commands
+
+        results = execute_commands(
+            [
+                InteractCommand(
+                    type="interact",
+                    url="https://blocked.com/login",
+                    actions=[PageAction(action="click", selector="button")],
+                )
+            ]
+        )
+
+    assert results[0].status == "error"
+    assert "blocked" in results[0].error.lower()
+
+
 
 def test_truncate_short_string_unchanged():
     from app.services.runner import _truncate

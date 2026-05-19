@@ -176,6 +176,45 @@ class FollowCommand(BaseModel):
     use_stealthy: bool = False
 
 
+class PageAction(BaseModel):
+    """A single browser interaction step inside an ``interact`` command."""
+
+    action: Literal["fill", "click", "hover", "wait_for_selector", "wait_for_load_state", "press"]
+    selector: Optional[str] = None
+    value: Optional[str] = None
+    """For ``fill``: text to type.  For ``press``: key name (e.g. ``"Enter"``)."""
+    state: Optional[str] = None
+    """For ``wait_for_load_state``: ``"load"``, ``"domcontentloaded"``, or ``"networkidle"``."""
+    timeout: Optional[int] = Field(default=None, ge=100, le=120000, description="ms")
+
+    @model_validator(mode="after")
+    def validate_fields(self) -> "PageAction":
+        needs_selector = {"fill", "click", "hover", "wait_for_selector", "press"}
+        if self.action in needs_selector and not self.selector:
+            raise ValueError(f"action '{self.action}' requires a selector")
+        if self.action == "fill" and self.value is None:
+            raise ValueError("action 'fill' requires a value")
+        if self.action == "press" and not self.value:
+            raise ValueError("action 'press' requires a value (key name)")
+        return self
+
+
+class InteractCommand(BaseModel):
+    """Navigate to a URL and perform interactive browser actions (fill, click, etc.)."""
+
+    type: Literal["interact"]
+    url: str
+    actions: list[PageAction] = Field(..., min_length=1)
+    headless: bool = True
+    timeout: Optional[int] = Field(default=None, ge=1000, le=120000, description="ms")
+    css_selector: Optional[str] = None
+
+    @field_validator("url")
+    @classmethod
+    def url_must_be_http(cls, v: str) -> str:
+        return _validate_url(v)
+
+
 # Union of all commands – Pydantic uses the ``type`` discriminator
 from typing import Union, Annotated
 
@@ -187,6 +226,7 @@ AnyCommand = Annotated[
         StealthyFetchCommand,
         ExtractCommand,
         FollowCommand,
+        InteractCommand,
     ],
     Field(discriminator="type"),
 ]

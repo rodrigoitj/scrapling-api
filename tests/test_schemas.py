@@ -10,6 +10,8 @@ from app.schemas import (
     FetchCommand,
     FollowCommand,
     GetCommand,
+    InteractCommand,
+    PageAction,
     PostCommand,
     RunRequest,
     StealthyFetchCommand,
@@ -226,3 +228,88 @@ def test_follow_command_custom_attribute():
 def test_get_command_timeout_too_high():
     with pytest.raises(ValidationError):
         GetCommand(type="get", url="https://example.com", timeout=150)
+
+
+# --------------------------------------------------------------------------- #
+# InteractCommand / PageAction
+# --------------------------------------------------------------------------- #
+
+def test_interact_command_valid():
+    cmd = InteractCommand(
+        type="interact",
+        url="https://example.com/login",
+        actions=[
+            PageAction(action="fill", selector="#user", value="alice"),
+            PageAction(action="click", selector="button"),
+        ],
+    )
+    assert cmd.url == "https://example.com/login"
+    assert len(cmd.actions) == 2
+    assert cmd.headless is True
+
+
+def test_interact_command_rejects_non_http_scheme():
+    with pytest.raises(ValidationError, match="http or https"):
+        InteractCommand(
+            type="interact",
+            url="ftp://example.com",
+            actions=[PageAction(action="click", selector="button")],
+        )
+
+
+def test_interact_command_requires_actions():
+    with pytest.raises(ValidationError):
+        InteractCommand(type="interact", url="https://example.com", actions=[])
+
+
+def test_page_action_fill_requires_value():
+    with pytest.raises(ValidationError, match="value"):
+        PageAction(action="fill", selector="#user")
+
+
+def test_page_action_fill_requires_selector():
+    with pytest.raises(ValidationError, match="selector"):
+        PageAction(action="fill", value="alice")
+
+
+def test_page_action_click_requires_selector():
+    with pytest.raises(ValidationError, match="selector"):
+        PageAction(action="click")
+
+
+def test_page_action_hover_valid():
+    act = PageAction(action="hover", selector="[href='#login']")
+    assert act.selector == "[href='#login']"
+
+
+def test_page_action_hover_requires_selector():
+    with pytest.raises(ValidationError, match="selector"):
+        PageAction(action="hover")
+
+
+def test_page_action_wait_for_load_state_no_selector_needed():
+    act = PageAction(action="wait_for_load_state", state="networkidle")
+    assert act.state == "networkidle"
+
+
+def test_page_action_press_requires_value():
+    with pytest.raises(ValidationError, match="value"):
+        PageAction(action="press", selector="input")
+
+
+def test_interact_in_run_request_discriminated_union():
+    req = RunRequest.model_validate(
+        {
+            "commands": [
+                {
+                    "type": "interact",
+                    "url": "https://example.com/login",
+                    "actions": [
+                        {"action": "fill", "selector": "#u", "value": "alice"},
+                        {"action": "click", "selector": "button"},
+                    ],
+                }
+            ]
+        }
+    )
+    assert req.commands[0].type == "interact"  # type: ignore[union-attr]

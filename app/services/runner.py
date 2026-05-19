@@ -36,6 +36,7 @@ from app.schemas import (
     FetchCommand,
     FollowCommand,
     GetCommand,
+    InteractCommand,
     PostCommand,
     StealthyFetchCommand,
 )
@@ -316,6 +317,64 @@ def _run_follow(cmd: FollowCommand, ctx: _Context, cfg: dict) -> CommandResult:
     return _ok(output)
 
 
+def _run_interact(cmd: InteractCommand, ctx: _Context, cfg: dict) -> CommandResult:
+    """Navigate to a URL and perform interactive browser actions via Playwright."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("playwright is required for the 'interact' command") from exc
+
+    try:
+        from scrapling.parser import Selector as ScraplingSelector
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("scrapling is required for the 'interact' command") from exc
+
+    _check_host(cmd.url)
+    timeout_ms = cmd.timeout or cfg["DEFAULT_BROWSER_TIMEOUT_MS"]
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=cmd.headless)
+        try:
+            page = browser.new_page()
+            page.goto(cmd.url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+            for act in cmd.actions:
+                act_timeout = act.timeout or timeout_ms
+                if act.action == "fill":
+                    page.fill(act.selector, act.value or "", timeout=act_timeout)  # type: ignore[arg-type]
+                elif act.action == "click":
+                    page.click(act.selector, timeout=act_timeout)  # type: ignore[arg-type]
+                    page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+                elif act.action == "wait_for_selector":
+                    page.wait_for_selector(act.selector, timeout=act_timeout)  # type: ignore[arg-type]
+                elif act.action == "wait_for_load_state":
+                    page.wait_for_load_state(act.state or "load", timeout=act_timeout)
+                elif act.action == "hover":
+                    page.hover(act.selector, timeout=act_timeout)  # type: ignore[arg-type]
+                elif act.action == "press":
+                    page.press(act.selector, act.value or "Enter", timeout=act_timeout)  # type: ignore[arg-type]
+
+            html = page.content()
+            final_url = page.url
+        finally:
+            browser.close()
+
+    scrapling_page = ScraplingSelector(html)
+    ctx.page = scrapling_page
+    ctx.url = final_url
+
+    output: Any
+    if cmd.css_selector:
+        output = _truncate(
+            scrapling_page.css(cmd.css_selector + "::text").getall(),
+            cfg["MAX_OUTPUT_LENGTH"],
+        )
+    else:
+        output = _truncate(html, cfg["MAX_OUTPUT_LENGTH"])
+
+    return _ok(output)
+
+
 # --------------------------------------------------------------------------- #
 # Dispatcher map
 # --------------------------------------------------------------------------- #
@@ -327,6 +386,7 @@ _HANDLERS = {
     "stealthy_fetch": _run_stealthy_fetch,
     "extract": _run_extract,
     "follow": _run_follow,
+    "interact": _run_interact,
 }
 
 
