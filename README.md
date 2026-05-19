@@ -188,6 +188,44 @@ To extract an attribute instead of text:
 }
 ```
 
+##### `interact` — navigate and perform interactive browser actions
+
+Opens a Chromium browser, navigates to `url`, executes each step in `actions`
+sequentially, then stores the resulting page in context for subsequent `extract`
+commands.
+
+```json
+{
+  "type": "interact",
+  "url": "https://example.com/login",
+  "headless": true,
+  "timeout": 30000,
+  "css_selector": ".dashboard-title",
+  "actions": [
+    { "action": "hover",              "selector": "[href='#login']" },
+    { "action": "fill",               "selector": "#username",          "value": "alice" },
+    { "action": "fill",               "selector": "input[type=password]", "value": "secret" },
+    { "action": "click",              "selector": "button[type=submit]" },
+    { "action": "wait_for_load_state", "state": "networkidle" },
+    { "action": "wait_for_selector",   "selector": ".dashboard" }
+  ]
+}
+```
+
+Supported `action` values:
+
+| Action | Required fields | Description |
+|---|---|---|
+| `fill` | `selector`, `value` | Type text into an input field |
+| `click` | `selector` | Click an element; waits for `domcontentloaded` after |
+| `hover` | `selector` | Move the mouse over an element |
+| `press` | `selector`, `value` | Press a key (e.g. `"Enter"`) on a focused element |
+| `wait_for_selector` | `selector` | Pause until the selector appears in the DOM |
+| `wait_for_load_state` | `state` | Pause until `"load"`, `"domcontentloaded"`, or `"networkidle"` |
+
+Each action accepts an optional `timeout` (ms, `100`–`120000`) that overrides
+the command-level `timeout` for that step only.
+
 ---
 
 #### Example: GET + extract headings
@@ -235,6 +273,32 @@ curl -s -X POST http://localhost:5000/api/v1/runs \
         "solve_cloudflare": true,
         "css_selector": "#padded_content a"
       }
+    ]
+  }'
+```
+
+#### Example: login form with browser interaction
+
+```bash
+curl -s -X POST http://localhost:5000/api/v1/runs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cache": false,
+    "commands": [
+      {
+        "type": "interact",
+        "url": "https://example.com/login",
+        "headless": true,
+        "actions": [
+          { "action": "hover",  "selector": "[href=\"#login\"]" },
+          { "action": "fill",   "selector": "input[name=login]",    "value": "alice" },
+          { "action": "fill",   "selector": "input[type=password]", "value": "secret" },
+          { "action": "click",  "selector": "button[type=submit]" },
+          { "action": "wait_for_load_state", "state": "networkidle" }
+        ]
+      },
+      { "type": "extract", "css_selector": ".user-data .activity div:first-child .num" },
+      { "type": "extract", "css_selector": ".user-data .activity div:nth-of-type(2) .num" }
     ]
   }'
 ```
