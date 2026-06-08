@@ -207,7 +207,8 @@ commands.
     { "action": "fill",               "selector": "input[type=password]", "value": "secret" },
     { "action": "click",              "selector": "button[type=submit]" },
     { "action": "wait_for_load_state", "state": "networkidle" },
-    { "action": "wait_for_selector",   "selector": ".dashboard" }
+    { "action": "wait_for_selector",   "selector": ".dashboard" },
+    { "action": "scroll",              "y": 500 }
   ]
 }
 ```
@@ -222,6 +223,7 @@ Supported `action` values:
 | `press` | `selector`, `value` | Press a key (e.g. `"Enter"`) on a focused element |
 | `wait_for_selector` | `selector` | Pause until the selector appears in the DOM |
 | `wait_for_load_state` | `state` | Pause until `"load"`, `"domcontentloaded"`, or `"networkidle"` |
+| `scroll` | `x` and/or `y` | Scroll the page by `x` px horizontally and/or `y` px vertically |
 
 Each action accepts an optional `timeout` (ms, `100`–`120000`) that overrides
 the command-level `timeout` for that step only.

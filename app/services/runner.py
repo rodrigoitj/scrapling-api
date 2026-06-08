@@ -353,6 +353,8 @@ def _run_interact(cmd: InteractCommand, ctx: _Context, cfg: dict) -> CommandResu
                     page.hover(act.selector, timeout=act_timeout)  # type: ignore[arg-type]
                 elif act.action == "press":
                     page.press(act.selector, act.value or "Enter", timeout=act_timeout)  # type: ignore[arg-type]
+                elif act.action == "scroll":
+                    page.mouse.wheel(act.x or 0, act.y or 0)
 
             html = page.content()
             final_url = page.url

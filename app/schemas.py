@@ -179,12 +179,14 @@ class FollowCommand(BaseModel):
 class PageAction(BaseModel):
     """A single browser interaction step inside an ``interact`` command."""
 
-    action: Literal["fill", "click", "hover", "wait_for_selector", "wait_for_load_state", "press"]
+    action: Literal["fill", "click", "hover", "wait_for_selector", "wait_for_load_state", "press", "scroll"]
     selector: Optional[str] = None
     value: Optional[str] = None
     """For ``fill``: text to type.  For ``press``: key name (e.g. ``"Enter"``)."""
     state: Optional[str] = None
     """For ``wait_for_load_state``: ``"load"``, ``"domcontentloaded"``, or ``"networkidle"``."""
+    x: Optional[int] = Field(default=None, description="Horizontal scroll delta in pixels (for 'scroll').")
+    y: Optional[int] = Field(default=None, description="Vertical scroll delta in pixels (for 'scroll').")
     timeout: Optional[int] = Field(default=None, ge=100, le=120000, description="ms")
 
     @model_validator(mode="after")
@@ -196,6 +198,8 @@ class PageAction(BaseModel):
             raise ValueError("action 'fill' requires a value")
         if self.action == "press" and not self.value:
             raise ValueError("action 'press' requires a value (key name)")
+        if self.action == "scroll" and self.x is None and self.y is None:
+            raise ValueError("action 'scroll' requires at least one of 'x' or 'y'")
         return self
 
 

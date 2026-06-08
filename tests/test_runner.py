@@ -641,6 +641,65 @@ def test_runner_interact_blocked_host(app):
     assert "blocked" in results[0].error.lower()
 
 
+def test_runner_interact_scroll_calls_mouse_wheel(app):
+    from app.schemas import InteractCommand, PageAction
+
+    mock_sync_pw, mock_pl_page = _make_pw_mocks()
+    mock_selector = MagicMock()
+
+    with app.app_context():
+        with (
+            patch("playwright.sync_api.sync_playwright", mock_sync_pw),
+            patch("scrapling.parser.Selector", return_value=mock_selector),
+        ):
+            from app.services.runner import execute_commands
+
+            execute_commands(
+                [
+                    InteractCommand(
+                        type="interact",
+                        url="https://example.com",
+                        actions=[PageAction(action="scroll", y=500)],
+                    )
+                ]
+            )
+
+    mock_pl_page.mouse.wheel.assert_called_once_with(0, 500)
+
+
+def test_runner_interact_scroll_horizontal(app):
+    from app.schemas import InteractCommand, PageAction
+
+    mock_sync_pw, mock_pl_page = _make_pw_mocks()
+    mock_selector = MagicMock()
+
+    with app.app_context():
+        with (
+            patch("playwright.sync_api.sync_playwright", mock_sync_pw),
+            patch("scrapling.parser.Selector", return_value=mock_selector),
+        ):
+            from app.services.runner import execute_commands
+
+            execute_commands(
+                [
+                    InteractCommand(
+                        type="interact",
+                        url="https://example.com",
+                        actions=[PageAction(action="scroll", x=300, y=100)],
+                    )
+                ]
+            )
+
+    mock_pl_page.mouse.wheel.assert_called_once_with(300, 100)
+
+
+def test_schema_scroll_requires_x_or_y():
+    from app.schemas import PageAction
+    import pytest
+
+    with pytest.raises(Exception, match="x.*y|y.*x|requires at least one"):
+        PageAction(action="scroll")
+
 
 def test_truncate_short_string_unchanged():
     from app.services.runner import _truncate
