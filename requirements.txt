@@ -4,7 +4,7 @@ python-dotenv>=1.0,<2.0
 pydantic>=2.7,<3.0
 
 # Scrapling - adaptive web scraping framework
-scrapling[all]>=0.4.8
+scrapling[all]>=0.4.9
 
 # Redis
 redis>=5.0,<6.0
